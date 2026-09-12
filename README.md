@@ -17,35 +17,9 @@
 
 ## 📐 Architecture
 
-```
-┌─────────────────────┐
-│   Ingestion Layer    │  .csv · .xls · .xlsx · .json · .md · .pdf
-└──────────┬───────────┘
-           ▼
-┌─────────────────────────────────────────┐
-│  Preprocessing: Filter · Dedup · Normalize │
-└──────────┬──────────────────────────────┘
-           ▼
-┌─────────────────────┐
-│  Preprocessed File    │
-└──────────┬───────────┘
-           ▼
-┌───────────────────────────────────────────────┐
-│  Pandas Rule-Based Engine  (df.query / np.select) │
-└──────────┬──────────────────────────────────────┘
-           ▼
-┌───────────────────────────────────────┐
-│  Embeddings Model (OpenRouter, tokenized) │
-└──────────┬──────────────────────────────┘
-           ▼
-┌─────────────────────────────┐
-│   Context Compression Layer  │
-└──────────┬───────────────────┘
-           ▼
-┌─────────────────────────────────────────────┐
-│   RAG via Langflow  ·  Prompt → LLM (OpenRouter)  │
-└─────────────────────────────────────────────┘
-```
+<div align="center">
+  <img src="docs/architecture.svg" alt="RAG pipeline architecture diagram" width="620">
+</div>
 
 > **The UI is strictly Langflow.** This repository is the *engine room* — ingestion, cleaning, rule evaluation, embeddings, and context compression all happen here, behind a FastAPI backend. Langflow owns the retrieval-augmented prompt → LLM flow and the chat surface on top of it.
 
