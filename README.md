@@ -68,6 +68,31 @@ uvicorn app.main:app --reload --port 8000
 
 The API is now live at `http://localhost:8000` (interactive docs at `/docs`).
 
+### Configuring credentials
+
+Config is resolved with this precedence:
+
+1. `POST /config` — overrides everything, no restart needed.
+2. Environment variables — `OPENROUTER_API_KEY`, `EMBEDDING_MODEL`, `LLM_MODEL`.
+
+If neither is set, credential-requiring endpoints return a `400` telling you what's missing.
+
+---
+
+## ☁️ Deploying on Render
+
+This repo includes a `render.yaml` Blueprint at the root.
+
+1. On [Render](https://dashboard.render.com) → **New** → **Blueprint** → select this repo.
+2. Render detects `render.yaml` and prompts you to fill in the three environment variables it declares (`sync: false` means they're entered by you at deploy time, never committed to the repo):
+   - `OPENROUTER_API_KEY`
+   - `EMBEDDING_MODEL` (e.g. `liquid/lfm-2.5-embedding-350m:free`)
+   - `LLM_MODEL` (e.g. `nvidia/nemotron-3.5-content-safety:free`)
+3. Click **Apply** — Render runs `pip install -r requirements.txt` then `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+4. Once live, verify with `curl https://<your-service>.onrender.com/health`.
+
+> Free-tier services spin down after ~15 min idle; the in-memory pipeline state (`_STATE`) resets on every restart, so re-run `/ingest` → `/preprocess` → `/apply-rules` → `/embed` after a cold start.
+
 ---
 
 ## 🔧 Pipeline API

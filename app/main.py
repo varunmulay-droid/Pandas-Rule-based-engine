@@ -8,13 +8,20 @@ own UI (per the "strictly Langflow UI" requirement) — this FastAPI app
 is the engine/backend that Langflow's flow calls into via HTTP, using
 the custom component in `langflow_custom/rag_backend_component.py`.
 
-API keys and model names are never hardcoded: they're supplied per
-request (or once via /config for the process lifetime).
+API keys and model names are never hardcoded. Precedence, highest first:
+  1. Whatever the user supplies via POST /config (overrides everything, no server restart needed)
+  2. Environment variables (OPENROUTER_API_KEY, EMBEDDING_MODEL, LLM_MODEL) —
+     e.g. set as Render "envVars" with sync: false, which makes Render's
+     dashboard prompt YOU (the deployer) to type them in as input at deploy
+     time, rather than committing them to the repo.
+If neither is set, calls that need credentials return a clear 400 asking
+the caller to hit /config first.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -34,7 +41,36 @@ logger = logging.getLogger("main")
 app = FastAPI(title="RAG Pipeline Backend", version="1.0.0")
 
 # In-memory store for the demo/dev flow. Swap for a real DB/vector store in production.
-_STATE: dict[str, Any] = {"records": [], "embeddings": [], "config": {}}
+# `config` seeds from environment variables (if present) so a Render deploy
+# works immediately without a manual /config call; /config always overrides.
+_STATE: dict[str, Any] = {
+    "records": [],
+    "embeddings": [],
+    "config": {
+        k: v
+        for k, v in {
+            "openrouter_api_key": os.environ.get("OPENROUTER_API_KEY"),
+            "embedding_model": os.environ.get("EMBEDDING_MODEL"),
+            "llm_model": os.environ.get("LLM_MODEL"),
+        }.items()
+        if v
+    },
+}
+
+
+def _get_config() -> dict[str, str]:
+    cfg = _STATE.get("config") or {}
+    missing = [k for k in ("openrouter_api_key", "embedding_model", "llm_model") if not cfg.get(k)]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Missing config: {missing}. Call POST /config with your OpenRouter API key "
+                "and model names, or set OPENROUTER_API_KEY / EMBEDDING_MODEL / LLM_MODEL "
+                "as environment variables on the server."
+            ),
+        )
+    return cfg
 
 
 # ---------------------------------------------------------------- models --
@@ -150,9 +186,7 @@ def apply_rules(req: RuleEngineRequest):
 @app.post("/embed")
 async def embed(req: EmbedRequest):
     """Embeddings model step (Tokenization) via OpenRouter."""
-    cfg = _STATE.get("config") or {}
-    if not cfg:
-        raise HTTPException(status_code=400, detail="Call /config first with your API key and model names.")
+    cfg = _get_config()
     if not _STATE["records"]:
         raise HTTPException(status_code=400, detail="No data to embed. Call /ingest first.")
 
@@ -170,9 +204,7 @@ async def query(req: QueryRequest):
     string that the Langflow flow's Prompt -> LLM component should use
     (Langflow calls this endpoint, then separately calls the LLM node).
     """
-    cfg = _STATE.get("config") or {}
-    if not cfg:
-        raise HTTPException(status_code=400, detail="Call /config first with your API key and model names.")
+    cfg = _get_config()
     if not _STATE["embeddings"]:
         raise HTTPException(status_code=400, detail="No embeddings available. Call /embed first.")
 
@@ -194,7 +226,7 @@ async def generate(req: QueryRequest):
     if the flow needs to route the prompt through Langflow-native nodes.
     """
     retrieval = await query(req)
-    cfg = _STATE["config"]
+    cfg = _get_config()
     chat_client = OpenRouterChatClient(cfg["openrouter_api_key"], cfg["llm_model"])
     prompt = (
         f"Answer the question using only the context below.\n\n"
