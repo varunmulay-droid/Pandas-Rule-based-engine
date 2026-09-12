@@ -8,25 +8,23 @@ own UI (per the "strictly Langflow UI" requirement) — this FastAPI app
 is the engine/backend that Langflow's flow calls into via HTTP, using
 the custom component in `langflow_custom/rag_backend_component.py`.
 
-API keys and model names are never hardcoded. Precedence, highest first:
-  1. Whatever the user supplies via POST /config (overrides everything, no server restart needed)
-  2. Environment variables (OPENROUTER_API_KEY, EMBEDDING_MODEL, LLM_MODEL) —
-     e.g. set as Render "envVars" with sync: false, which makes Render's
-     dashboard prompt YOU (the deployer) to type them in as input at deploy
-     time, rather than committing them to the repo.
-If neither is set, calls that need credentials return a clear 400 asking
-the caller to hit /config first.
+API keys and model names are never hardcoded and never sit in Render's
+dashboard or repo. The deployed app itself serves a small HTML form at
+"/" where you type your OpenRouter API key + model names once the
+service is live; that form POSTs to /config and the key is held only
+in this process's memory for the life of the running instance — it is
+never logged, written to disk, or included in any response.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from .compression import compress_to_budget, select_top_k
@@ -40,22 +38,9 @@ logger = logging.getLogger("main")
 
 app = FastAPI(title="RAG Pipeline Backend", version="1.0.0")
 
-# In-memory store for the demo/dev flow. Swap for a real DB/vector store in production.
-# `config` seeds from environment variables (if present) so a Render deploy
-# works immediately without a manual /config call; /config always overrides.
-_STATE: dict[str, Any] = {
-    "records": [],
-    "embeddings": [],
-    "config": {
-        k: v
-        for k, v in {
-            "openrouter_api_key": os.environ.get("OPENROUTER_API_KEY"),
-            "embedding_model": os.environ.get("EMBEDDING_MODEL"),
-            "llm_model": os.environ.get("LLM_MODEL"),
-        }.items()
-        if v
-    },
-}
+# In-memory only — reset on every restart/redeploy. Swap for a real
+# secrets manager + DB/vector store for anything beyond a demo.
+_STATE: dict[str, Any] = {"records": [], "embeddings": [], "config": {}}
 
 
 def _get_config() -> dict[str, str]:
@@ -64,11 +49,7 @@ def _get_config() -> dict[str, str]:
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Missing config: {missing}. Call POST /config with your OpenRouter API key "
-                "and model names, or set OPENROUTER_API_KEY / EMBEDDING_MODEL / LLM_MODEL "
-                "as environment variables on the server."
-            ),
+            detail=f"Missing config: {missing}. Open the app's root URL in a browser and submit your API key/models first.",
         )
     return cfg
 
@@ -115,11 +96,106 @@ class QueryRequest(BaseModel):
 
 
 # ------------------------------------------------------------- endpoints --
+CONFIG_PAGE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RAG Pipeline — Configuration</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; max-width: 480px; margin: 60px auto; color: #1a1d23; }
+  h1 { font-size: 20px; }
+  label { display: block; margin-top: 16px; font-size: 13px; font-weight: 600; color: #4a505b; }
+  input { width: 100%; padding: 10px; margin-top: 6px; box-sizing: border-box; border: 1px solid #d5d8dd; border-radius: 8px; font-size: 14px; }
+  button { margin-top: 22px; padding: 10px 18px; border: none; border-radius: 8px; background: #2f6fe0; color: white; font-size: 14px; cursor: pointer; }
+  button:hover { background: #2559b8; }
+  #status { margin-top: 16px; font-size: 13px; }
+  .note { font-size: 12px; color: #767c87; margin-top: 24px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <h1>RAG Pipeline Backend — Configuration</h1>
+  <p style="font-size:13px;color:#4a505b;">Enter your OpenRouter API key and model names. This is sent directly to this
+  server's in-memory config and is never written to disk, logged, or committed anywhere.</p>
+
+  <form id="cfg-form">
+    <label>OpenRouter API Key</label>
+    <input type="password" id="openrouter_api_key" required autocomplete="off">
+
+    <label>Embedding Model</label>
+    <input type="text" id="embedding_model" placeholder="liquid/lfm-2.5-embedding-350m:free" required>
+
+    <label>LLM Model</label>
+    <input type="text" id="llm_model" placeholder="nvidia/nemotron-3.5-content-safety:free" required>
+
+    <button type="submit">Save configuration</button>
+  </form>
+  <div id="status"></div>
+
+  <p class="note">
+    This config lives in server memory only for the lifetime of this running instance —
+    it resets on every restart/redeploy, and no other user of this deployment can read it back out.
+    Use <code>/docs</code> for the full API once configured.
+  </p>
+
+<script>
+document.getElementById('cfg-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = {
+    openrouter_api_key: document.getElementById('openrouter_api_key').value,
+    embedding_model: document.getElementById('embedding_model').value,
+    llm_model: document.getElementById('llm_model').value,
+  };
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = 'Saving...';
+  try {
+    const resp = await fetch('/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+      statusEl.style.color = '#159c81';
+      statusEl.textContent = 'Saved. You can now use /ingest, /preprocess, /apply-rules, /embed, /query via /docs.';
+    } else {
+      const err = await resp.json();
+      statusEl.style.color = '#d8306a';
+      statusEl.textContent = 'Error: ' + JSON.stringify(err.detail);
+    }
+  } catch (err) {
+    statusEl.style.color = '#d8306a';
+    statusEl.textContent = 'Request failed: ' + err;
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/", response_class=HTMLResponse)
+def config_page():
+    """Serves the runtime configuration form — this is how the API key is supplied
+    once the app is deployed, instead of via Render env vars or the repo."""
+    return CONFIG_PAGE
+
+
 @app.post("/config")
 def set_config(cfg: ModelConfig):
-    """User supplies API key + model names once; reused by later calls unless overridden."""
+    """Called by the form on '/' (or directly). Held in memory only for this process's lifetime."""
     _STATE["config"] = cfg.model_dump()
     return {"status": "ok"}
+
+
+@app.get("/config/status")
+def config_status():
+    """Reports whether config is set, without ever revealing the key itself."""
+    cfg = _STATE.get("config") or {}
+    return {
+        "configured": bool(cfg.get("openrouter_api_key")),
+        "embedding_model": cfg.get("embedding_model"),
+        "llm_model": cfg.get("llm_model"),
+    }
 
 
 @app.post("/ingest")

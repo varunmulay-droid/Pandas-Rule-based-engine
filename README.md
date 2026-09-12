@@ -70,28 +70,28 @@ The API is now live at `http://localhost:8000` (interactive docs at `/docs`).
 
 ### Configuring credentials
 
-Config is resolved with this precedence:
+Once the app is deployed and live, open its root URL in a browser — it serves a small
+configuration form where you paste your OpenRouter API key and model names. Submitting
+it calls `POST /config` under the hood, and the key is held **only in that server
+process's memory** for the life of the running instance:
 
-1. `POST /config` — overrides everything, no restart needed.
-2. Environment variables — `OPENROUTER_API_KEY`, `EMBEDDING_MODEL`, `LLM_MODEL`.
-
-If neither is set, credential-requiring endpoints return a `400` telling you what's missing.
+- Never written to disk, logged, or committed to the repo
+- Never set as a Render dashboard environment variable
+- Resets automatically on every redeploy/restart (free-tier instances also reset after ~15 min idle)
+- `GET /config/status` lets you confirm it's set without ever revealing the key itself
 
 ---
 
 ## ☁️ Deploying on Render
 
-This repo includes a `render.yaml` Blueprint at the root.
+This repo includes a `render.yaml` Blueprint at the root — no environment variables to fill in at deploy time.
 
 1. On [Render](https://dashboard.render.com) → **New** → **Blueprint** → select this repo.
-2. Render detects `render.yaml` and prompts you to fill in the three environment variables it declares (`sync: false` means they're entered by you at deploy time, never committed to the repo):
-   - `OPENROUTER_API_KEY`
-   - `EMBEDDING_MODEL` (e.g. `liquid/lfm-2.5-embedding-350m:free`)
-   - `LLM_MODEL` (e.g. `nvidia/nemotron-3.5-content-safety:free`)
-3. Click **Apply** — Render runs `pip install -r requirements.txt` then `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-4. Once live, verify with `curl https://<your-service>.onrender.com/health`.
+2. Render detects `render.yaml` and creates the web service — `pip install -r requirements.txt` then `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+3. Once live, open `https://<your-service>.onrender.com/` in a browser and submit your API key + model names via the form.
+4. Verify with `curl https://<your-service>.onrender.com/config/status` and `.../health`.
 
-> Free-tier services spin down after ~15 min idle; the in-memory pipeline state (`_STATE`) resets on every restart, so re-run `/ingest` → `/preprocess` → `/apply-rules` → `/embed` after a cold start.
+> Free-tier services spin down after ~15 min idle; both the config and the in-memory pipeline state (`_STATE`) reset on every restart, so you'll need to re-submit the config form and re-run `/ingest` → `/preprocess` → `/apply-rules` → `/embed` after a cold start.
 
 ---
 
@@ -99,7 +99,7 @@ This repo includes a `render.yaml` Blueprint at the root.
 
 | Step | Endpoint | Purpose |
 |---|---|---|
-| 0 | `POST /config` | Register your OpenRouter API key + embedding/LLM model names |
+| 0 | `GET /` → `POST /config` | Configuration form (browser) that registers your OpenRouter API key + embedding/LLM model names in memory |
 | 1 | `POST /ingest` | Upload a file (`.csv` / `.xls(x)` / `.json` / `.md` / `.pdf`) |
 | 2 | `POST /preprocess` | Filter, dedup, normalize the ingested data |
 | 3 | `POST /apply-rules` | Run the rule engine over the preprocessed data |
