@@ -13,12 +13,15 @@ as Render "envVars" with sync: false, which makes Render's dashboard
 prompt YOU (the deployer) to type them in as input at deploy time,
 never committed to the repo:
 
-    OPENROUTER_API_KEY  - single OpenRouter API key, used for both models
+    EMBEDDING_API_KEY   - OpenRouter API key used for the embeddings model
     EMBEDDING_MODEL     - e.g. liquid/lfm-2.5-embedding-350m:free
+    LLM_API_KEY         - OpenRouter API key used for the base LLM
     LLM_MODEL           - e.g. nvidia/nemotron-3.5-content-safety:free
 
-POST /config can still override these at runtime without a redeploy
-(e.g. to swap models on the fly); env vars are just the default.
+Embeddings and the base LLM get separate keys/models because they may
+come from different OpenRouter accounts or providers. POST /config can
+still override these at runtime without a redeploy (e.g. to swap models
+on the fly); env vars are just the default.
 """
 
 from __future__ import annotations
@@ -51,8 +54,9 @@ _STATE: dict[str, Any] = {
     "config": {
         k: v
         for k, v in {
-            "openrouter_api_key": os.environ.get("OPENROUTER_API_KEY"),
+            "embedding_api_key": os.environ.get("EMBEDDING_API_KEY"),
             "embedding_model": os.environ.get("EMBEDDING_MODEL"),
+            "llm_api_key": os.environ.get("LLM_API_KEY"),
             "llm_model": os.environ.get("LLM_MODEL"),
         }.items()
         if v
@@ -62,14 +66,14 @@ _STATE: dict[str, Any] = {
 
 def _get_config() -> dict[str, str]:
     cfg = _STATE.get("config") or {}
-    required = ("openrouter_api_key", "embedding_model", "llm_model")
+    required = ("embedding_api_key", "embedding_model", "llm_api_key", "llm_model")
     missing = [k for k in required if not cfg.get(k)]
     if missing:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Missing config: {missing}. Set OPENROUTER_API_KEY / EMBEDDING_MODEL / "
-                "LLM_MODEL as environment variables, or call POST /config."
+                f"Missing config: {missing}. Set EMBEDDING_API_KEY / EMBEDDING_MODEL / "
+                "LLM_API_KEY / LLM_MODEL as environment variables, or call POST /config."
             ),
         )
     return cfg
@@ -77,8 +81,9 @@ def _get_config() -> dict[str, str]:
 
 # ---------------------------------------------------------------- models --
 class ModelConfig(BaseModel):
-    openrouter_api_key: str = Field(..., description="OpenRouter API key, used for both models")
+    embedding_api_key: str = Field(..., description="OpenRouter API key for the embeddings model")
     embedding_model: str = Field(..., description="e.g. liquid/lfm-2.5-embedding-350m:free")
+    llm_api_key: str = Field(..., description="OpenRouter API key for the base LLM")
     llm_model: str = Field(..., description="e.g. nvidia/nemotron-3.5-content-safety:free")
 
 
@@ -126,11 +131,12 @@ def set_config(cfg: ModelConfig):
 
 @app.get("/config/status")
 def config_status():
-    """Reports whether config is set, without ever revealing the key itself."""
+    """Reports whether config is set, without ever revealing the keys themselves."""
     cfg = _STATE.get("config") or {}
     return {
-        "configured": bool(cfg.get("openrouter_api_key")),
+        "embedding_configured": bool(cfg.get("embedding_api_key")),
         "embedding_model": cfg.get("embedding_model"),
+        "llm_configured": bool(cfg.get("llm_api_key")),
         "llm_model": cfg.get("llm_model"),
     }
 
@@ -204,7 +210,7 @@ async def embed(req: EmbedRequest):
         raise HTTPException(status_code=400, detail="No data to embed. Call /ingest first.")
 
     texts = [str(r.get(req.text_column, "")) for r in _STATE["records"]]
-    client = OpenRouterEmbeddingsClient(cfg["openrouter_api_key"], cfg["embedding_model"])
+    client = OpenRouterEmbeddingsClient(cfg["embedding_api_key"], cfg["embedding_model"])
     vectors = await client.embed(texts)
     _STATE["embeddings"] = vectors
     return {"embedded_chunks": len(vectors), "dimension": len(vectors[0]) if vectors else 0}
@@ -221,7 +227,7 @@ async def query(req: QueryRequest):
     if not _STATE["embeddings"]:
         raise HTTPException(status_code=400, detail="No embeddings available. Call /embed first.")
 
-    client = OpenRouterEmbeddingsClient(cfg["openrouter_api_key"], cfg["embedding_model"])
+    client = OpenRouterEmbeddingsClient(cfg["embedding_api_key"], cfg["embedding_model"])
     query_vec = (await client.embed([req.query]))[0]
 
     texts = [str(r.get("text", "")) for r in _STATE["records"]]
@@ -240,7 +246,7 @@ async def generate(req: QueryRequest):
     """
     retrieval = await query(req)
     cfg = _get_config()
-    chat_client = OpenRouterChatClient(cfg["openrouter_api_key"], cfg["llm_model"])
+    chat_client = OpenRouterChatClient(cfg["llm_api_key"], cfg["llm_model"])
     prompt = (
         f"Answer the question using only the context below.\n\n"
         f"Context:\n{retrieval['context']}\n\nQuestion: {req.query}"
