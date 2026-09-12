@@ -8,11 +8,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: EMBEDDING_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
       - key: EMBEDDING_MODEL
-        sync: false
-      - key: LLM_API_KEY
         sync: false
       - key: LLM_MODEL
         sync: false
