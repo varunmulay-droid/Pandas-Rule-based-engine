@@ -122,6 +122,12 @@ class QueryRequest(BaseModel):
 
 
 # ------------------------------------------------------------- endpoints --
+@app.get("/")
+def root():
+    """Avoids a bare 404 on the base URL; points to the interactive API docs."""
+    return {"service": "RAG Pipeline Backend", "docs": "/docs", "health": "/health"}
+
+
 @app.post("/config")
 def set_config(cfg: ModelConfig):
     """Optional runtime override of the env-var-sourced config, no redeploy needed."""
