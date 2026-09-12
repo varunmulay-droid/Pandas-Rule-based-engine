@@ -1,0 +1,244 @@
+{
+  "id": "rag-pipeline-flow-0001",
+  "name": "RAG Pipeline (FastAPI Backend + OpenRouter)",
+  "description": "Chat Input -> RAG Backend Bridge (calls the FastAPI /query endpoint) -> Prompt -> OpenRouter LLM -> Chat Output. The bridge component's code is embedded inline so no separate custom_components file is needed after import.",
+  "is_component": false,
+  "last_tested_version": "1.1.0",
+  "endpoint_name": null,
+  "data": {
+    "viewport": { "x": 80, "y": 80, "zoom": 0.75 },
+    "nodes": [
+      {
+        "id": "ChatInput-1",
+        "type": "genericNode",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "id": "ChatInput-1",
+          "type": "ChatInput",
+          "node": {
+            "display_name": "Chat Input",
+            "description": "User's question enters the flow here.",
+            "base_classes": ["Message"],
+            "template": {
+              "input_value": {
+                "type": "str",
+                "required": false,
+                "value": "",
+                "display_name": "Text",
+                "info": "Message to be passed as input."
+              },
+              "sender": { "type": "str", "value": "User", "display_name": "Sender" },
+              "sender_name": { "type": "str", "value": "User", "display_name": "Sender Name" }
+            },
+            "outputs": [
+              { "types": ["Message"], "selected": "Message", "name": "message", "display_name": "Message" }
+            ]
+          }
+        }
+      },
+      {
+        "id": "RAGBackendBridge-1",
+        "type": "genericNode",
+        "position": { "x": 320, "y": 0 },
+        "data": {
+          "id": "RAGBackendBridge-1",
+          "type": "CustomComponent",
+          "node": {
+            "display_name": "RAG Backend Bridge",
+            "description": "Calls the FastAPI RAG backend's /query endpoint for compressed context retrieval.",
+            "base_classes": ["Message"],
+            "template": {
+              "code": {
+                "type": "code",
+                "display_name": "Code",
+                "value": "import httpx\nfrom langflow.custom import Component\nfrom langflow.io import IntInput, MessageTextInput, Output\nfrom langflow.schema.message import Message\n\n\nclass RAGBackendBridge(Component):\n    display_name = \"RAG Backend Bridge\"\n    description = \"Calls the FastAPI RAG backend's /query endpoint for compressed context retrieval.\"\n    icon = \"database\"\n\n    inputs = [\n        MessageTextInput(name=\"query\", display_name=\"Query\", required=True),\n        MessageTextInput(\n            name=\"backend_url\",\n            display_name=\"Backend URL\",\n            value=\"https://rag-pipeline-backend-58bv.onrender.com/query\",\n            required=True,\n        ),\n        IntInput(name=\"top_k\", display_name=\"Top K\", value=5),\n        IntInput(name=\"max_context_chars\", display_name=\"Max Context Chars\", value=4000),\n    ]\n\n    outputs = [Output(display_name=\"Context\", name=\"context\", method=\"fetch_context\")]\n\n    def fetch_context(self) -> Message:\n        payload = {\n            \"query\": self.query,\n            \"top_k\": self.top_k,\n            \"max_context_chars\": self.max_context_chars,\n        }\n        with httpx.Client(timeout=60) as client:\n            resp = client.post(self.backend_url, json=payload)\n            resp.raise_for_status()\n            data = resp.json()\n\n        return Message(text=data[\"context\"])\n"
+              },
+              "query": {
+                "type": "str",
+                "required": true,
+                "display_name": "Query",
+                "input_types": ["Message"],
+                "value": ""
+              },
+              "backend_url": {
+                "type": "str",
+                "required": true,
+                "display_name": "Backend URL",
+                "value": "https://rag-pipeline-backend-58bv.onrender.com/query",
+                "info": "Replace with your deployed FastAPI backend's /query URL."
+              },
+              "top_k": { "type": "int", "display_name": "Top K", "value": 5 },
+              "max_context_chars": { "type": "int", "display_name": "Max Context Chars", "value": 4000 }
+            },
+            "outputs": [
+              { "types": ["Message"], "selected": "Message", "name": "context", "display_name": "Context" }
+            ]
+          }
+        }
+      },
+      {
+        "id": "Prompt-1",
+        "type": "genericNode",
+        "position": { "x": 640, "y": 0 },
+        "data": {
+          "id": "Prompt-1",
+          "type": "Prompt",
+          "node": {
+            "display_name": "Prompt",
+            "description": "Combines retrieved context with the user's question.",
+            "base_classes": ["Message"],
+            "template": {
+              "template": {
+                "type": "prompt",
+                "display_name": "Template",
+                "value": "Answer the question using only the context below.\n\nContext:\n{context}\n\nQuestion: {question}"
+              },
+              "context": {
+                "type": "str",
+                "display_name": "context",
+                "input_types": ["Message"],
+                "value": ""
+              },
+              "question": {
+                "type": "str",
+                "display_name": "question",
+                "input_types": ["Message"],
+                "value": ""
+              }
+            },
+            "outputs": [
+              { "types": ["Message"], "selected": "Message", "name": "prompt", "display_name": "Prompt Message" }
+            ]
+          }
+        }
+      },
+      {
+        "id": "OpenRouterLLM-1",
+        "type": "genericNode",
+        "position": { "x": 960, "y": 0 },
+        "data": {
+          "id": "OpenRouterLLM-1",
+          "type": "OpenAIModel",
+          "node": {
+            "display_name": "OpenRouter LLM",
+            "description": "OpenAI-compatible model node pointed at OpenRouter's API for the base LLM (Prompt -> LLM step).",
+            "base_classes": ["Message"],
+            "template": {
+              "openai_api_base": {
+                "type": "str",
+                "display_name": "API Base URL",
+                "value": "https://openrouter.ai/api/v1",
+                "info": "OpenRouter's OpenAI-compatible endpoint."
+              },
+              "openai_api_key": {
+                "type": "str",
+                "display_name": "OpenRouter API Key",
+                "password": true,
+                "value": "",
+                "info": "Same key you set as LLM_API_KEY on the backend."
+              },
+              "model_name": {
+                "type": "str",
+                "display_name": "Model",
+                "value": "nvidia/nemotron-3.5-content-safety:free",
+                "info": "Must match LLM_MODEL configured on the backend."
+              },
+              "input_value": {
+                "type": "str",
+                "display_name": "Input",
+                "input_types": ["Message"],
+                "value": ""
+              },
+              "stream": { "type": "bool", "display_name": "Stream", "value": true }
+            },
+            "outputs": [
+              { "types": ["Message"], "selected": "Message", "name": "text_output", "display_name": "Text" }
+            ]
+          }
+        }
+      },
+      {
+        "id": "ChatOutput-1",
+        "type": "genericNode",
+        "position": { "x": 1280, "y": 0 },
+        "data": {
+          "id": "ChatOutput-1",
+          "type": "ChatOutput",
+          "node": {
+            "display_name": "Chat Output",
+            "description": "Displays the LLM's answer back to the user.",
+            "base_classes": ["Message"],
+            "template": {
+              "input_value": {
+                "type": "str",
+                "display_name": "Text",
+                "input_types": ["Message"],
+                "value": ""
+              },
+              "sender": { "type": "str", "value": "Machine", "display_name": "Sender" },
+              "sender_name": { "type": "str", "value": "RAG Assistant", "display_name": "Sender Name" }
+            },
+            "outputs": []
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-chatinput-bridge",
+        "source": "ChatInput-1",
+        "target": "RAGBackendBridge-1",
+        "sourceHandle": "message",
+        "targetHandle": "query",
+        "data": {
+          "sourceHandle": { "id": "ChatInput-1", "name": "message", "output_types": ["Message"] },
+          "targetHandle": { "id": "RAGBackendBridge-1", "fieldName": "query", "inputTypes": ["Message"] }
+        }
+      },
+      {
+        "id": "edge-chatinput-prompt-question",
+        "source": "ChatInput-1",
+        "target": "Prompt-1",
+        "sourceHandle": "message",
+        "targetHandle": "question",
+        "data": {
+          "sourceHandle": { "id": "ChatInput-1", "name": "message", "output_types": ["Message"] },
+          "targetHandle": { "id": "Prompt-1", "fieldName": "question", "inputTypes": ["Message"] }
+        }
+      },
+      {
+        "id": "edge-bridge-prompt-context",
+        "source": "RAGBackendBridge-1",
+        "target": "Prompt-1",
+        "sourceHandle": "context",
+        "targetHandle": "context",
+        "data": {
+          "sourceHandle": { "id": "RAGBackendBridge-1", "name": "context", "output_types": ["Message"] },
+          "targetHandle": { "id": "Prompt-1", "fieldName": "context", "inputTypes": ["Message"] }
+        }
+      },
+      {
+        "id": "edge-prompt-llm",
+        "source": "Prompt-1",
+        "target": "OpenRouterLLM-1",
+        "sourceHandle": "prompt",
+        "targetHandle": "input_value",
+        "data": {
+          "sourceHandle": { "id": "Prompt-1", "name": "prompt", "output_types": ["Message"] },
+          "targetHandle": { "id": "OpenRouterLLM-1", "fieldName": "input_value", "inputTypes": ["Message"] }
+        }
+      },
+      {
+        "id": "edge-llm-chatoutput",
+        "source": "OpenRouterLLM-1",
+        "target": "ChatOutput-1",
+        "sourceHandle": "text_output",
+        "targetHandle": "input_value",
+        "data": {
+          "sourceHandle": { "id": "OpenRouterLLM-1", "name": "text_output", "output_types": ["Message"] },
+          "targetHandle": { "id": "ChatOutput-1", "fieldName": "input_value", "inputTypes": ["Message"] }
+        }
+      }
+    ]
+  }
+}

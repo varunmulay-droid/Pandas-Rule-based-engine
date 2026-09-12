@@ -48,12 +48,35 @@ rag_pipeline/
 │   ├── rule_engine.py           # ⭐ Vectorized rule engine (query & np.select backends)
 │   ├── openrouter_clients.py    # Embeddings + Chat clients for OpenRouter
 │   ├── compression.py           # Top-k retrieval + context-budget compression
+│   ├── static/index.html        # 🖥️ Self-contained dashboard UI (served at "/")
 │   └── main.py                  # FastAPI app wiring the full pipeline
 ├── langflow_custom/
-│   └── rag_backend_component.py # Langflow node bridging the flow to this backend
+│   ├── rag_backend_component.py # Langflow custom component (drop into custom_components/)
+│   └── rag_pipeline_flow.json   # Importable Langflow flow (component code embedded — no file copy needed)
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## 🖥️ Using the dashboard (no external tools needed)
+
+Once deployed (or running locally), just open the service's root URL in a browser:
+
+```
+https://<your-service>.onrender.com/
+```
+
+This serves a self-contained page where you can, in order:
+
+1. **Configure** — optionally override the embedding/LLM API keys and models (pre-filled from env vars if set).
+2. **Ingest** — upload a `.csv` / `.xls(x)` / `.json` / `.md` / `.pdf` file.
+3. **Preprocess** — filter and/or dedup rows.
+4. **Apply rules** — paste a JSON rule list, pick `query` or `np_select`, run it.
+5. **Embed** — generate embeddings for the ingested data.
+6. **Ask** — type a question, get a retrieved-and-compressed-context answer straight from the base LLM.
+
+Everything on this page calls the same REST endpoints documented at `/docs` — the dashboard is just a UI layer on top, no separate deployment required.
 
 ---
 
@@ -154,18 +177,21 @@ Every rule is validated before it runs, and every match is logged with the row c
 
 ---
 
-## 🔗 Wiring the Langflow Flow
+## 🔗 Wiring the Langflow Flow (optional)
 
-1. Copy `langflow_custom/rag_backend_component.py` into your Langflow `custom_components/` directory and restart Langflow.
-2. Build the flow:
+The dashboard above is enough on its own — Langflow is only needed if you specifically want the chat orchestrated inside Langflow's own canvas.
 
-   ```
-   Chat Input → RAG Backend Bridge (→ http://localhost:8000/query) → Prompt → OpenRouter LLM → Chat Output
-   ```
+**Fastest way — import the ready-made flow:**
 
-3. Point the OpenRouter LLM node at the same `llm_model` you registered in `/config`.
+1. Open Langflow → **Import** → select [`langflow_custom/rag_pipeline_flow.json`](langflow_custom/rag_pipeline_flow.json) from this repo.
+2. The flow imports fully wired: `Chat Input → RAG Backend Bridge → Prompt → OpenRouter LLM → Chat Output`. The bridge component's code is embedded directly inside the JSON, so nothing needs to be copied into `custom_components/`.
+3. Open the **RAG Backend Bridge** node and set `Backend URL` to your deployed service's `/query` endpoint (defaults to the Render URL used during development).
+4. Open the **OpenRouter LLM** node and set your API key + `model_name` to match `LLM_MODEL` on the backend.
+5. Run the flow.
 
-Everything upstream of the prompt — ingestion, preprocessing, rules, embeddings, compression — already happened in the FastAPI backend. Langflow's job is purely the final retrieval-augmented generation step and the UI around it.
+**Manual alternative:** copy `langflow_custom/rag_backend_component.py` into your Langflow `custom_components/` directory, restart Langflow, and build the same four-node flow by hand.
+
+Everything upstream of the prompt — ingestion, preprocessing, rules, embeddings, compression — already happened in the FastAPI backend (via the dashboard or `/docs`). Langflow's job, if you use it, is purely the final retrieval-augmented generation step and its own chat UI.
 
 ---
 

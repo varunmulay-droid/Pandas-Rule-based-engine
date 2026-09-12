@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Pipeline Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #262b35; --text: #e8eaed;
+    --muted: #8b909b; --accent: #4f8ef7; --accent2: #26c6a4; --danger: #f0618e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); margin: 0; padding: 32px 16px 80px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px; margin-bottom: 18px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .card .desc { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+    color: white; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  label { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 10px 0 5px; }
+  input[type=text], input[type=number], input[type=password], textarea, select {
+    width: 100%; padding: 9px 10px; background: #0f1115; border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13.5px; font-family: inherit;
+  }
+  textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12.5px; resize: vertical; }
+  input[type=file] { font-size: 13px; color: var(--muted); }
+  button {
+    margin-top: 14px; padding: 9px 16px; border: none; border-radius: 8px;
+    background: var(--accent); color: white; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.secondary { background: #2a2f3a; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  .status { margin-top: 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+  .status.ok { color: var(--accent2); }
+  .status.err { color: var(--danger); }
+  .status.pending { color: var(--muted); }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: #2a2f3a; color: var(--muted); margin-left: 6px;
+  }
+  .pill.on { background: #12332c; color: var(--accent2); }
+  pre.result {
+    background: #0f1115; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-size: 12px; max-height: 260px; overflow: auto; margin-top: 10px;
+  }
+  .answer-box {
+    background: #0f1115; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; margin-top: 10px; font-size: 14px; line-height: 1.6; white-space: pre-wrap;
+  }
+  .footer-note { color: var(--muted); font-size: 11.5px; text-align: center; margin-top: 24px; }
+  code { background: #0f1115; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RAG Pipeline Dashboard</h1>
+  <div class="subtitle">Ingest → Preprocess → Rules → Embed → Ask — all in one place, no external tools required.</div>
+
+  <!-- CONFIG -->
+  <div class="card">
+    <h2><span class="step-num">0</span> Configuration <span id="cfg-pill" class="pill">not set</span></h2>
+    <div class="desc">Optional — if you already set env vars on the server (EMBEDDING_API_KEY / EMBEDDING_MODEL / LLM_API_KEY / LLM_MODEL), this is pre-filled. Override here if you want to change models without redeploying.</div>
+    <div class="row">
+      <div>
+        <label>Embedding API Key</label>
+        <input type="password" id="embedding_api_key" placeholder="sk-or-...">
+      </div>
+      <div>
+        <label>Embedding Model</label>
+        <input type="text" id="embedding_model" placeholder="liquid/lfm-2.5-embedding-350m:free">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>LLM API Key</label>
+        <input type="password" id="llm_api_key" placeholder="sk-or-...">
+      </div>
+      <div>
+        <label>LLM Model</label>
+        <input type="text" id="llm_model" placeholder="nvidia/nemotron-3.5-content-safety:free">
+      </div>
+    </div>
+    <button onclick="saveConfig()">Save configuration</button>
+    <div id="cfg-status" class="status"></div>
+  </div>
+
+  <!-- INGEST -->
+  <div class="card">
+    <h2><span class="step-num">1</span> Ingest a file</h2>
+    <div class="desc">.csv · .xls / .xlsx · .json · .md · .pdf</div>
+    <input type="file" id="file-input">
+    <button onclick="ingest()">Upload &amp; ingest</button>
+    <div id="ingest-status" class="status"></div>
+  </div>
+
+  <!-- PREPROCESS -->
+  <div class="card">
+    <h2><span class="step-num">2</span> Preprocess <span class="pill">optional</span></h2>
+    <div class="desc">Filter rows and/or remove duplicates before running rules or embedding.</div>
+    <label>Filter query (pandas .query() syntax)</label>
+    <input type="text" id="filter_query" placeholder="e.g. age > 18">
+    <label>Dedup columns (comma-separated)</label>
+    <input type="text" id="dedup_subset" placeholder="e.g. email, name">
+    <button onclick="preprocess()">Run preprocessing</button>
+    <div id="preprocess-status" class="status"></div>
+  </div>
+
+  <!-- RULES -->
+  <div class="card">
+    <h2><span class="step-num">3</span> Apply rules <span class="pill">optional</span></h2>
+    <div class="desc">JSON list of rule objects: <code>{"name","condition","action"}</code>. Runs vectorized via <code>df.query()</code> or <code>numpy.select</code>.</div>
+    <textarea id="rules-json">[
+  { "name": "example_rule", "condition": "some_column > 10", "action": "Flag" }
+]</textarea>
+    <div class="row">
+      <div>
+        <label>Strategy</label>
+        <select id="strategy">
+          <option value="last_match">last_match</option>
+          <option value="first_match">first_match</option>
+        </select>
+      </div>
+      <div>
+        <label>Backend</label>
+        <select id="backend">
+          <option value="query">query (flexible)</option>
+          <option value="np_select">np_select (fast, mutually exclusive)</option>
+        </select>
+      </div>
+    </div>
+    <button onclick="applyRules()">Run rule engine</button>
+    <div id="rules-status" class="status"></div>
+    <pre class="result" id="rules-result" style="display:none;"></pre>
+  </div>
+
+  <!-- EMBED -->
+  <div class="card">
+    <h2><span class="step-num">4</span> Generate embeddings</h2>
+    <div class="desc">Embeds the ingested/processed text column via your configured embedding model.</div>
+    <button onclick="embed()">Run embeddings</button>
+    <div id="embed-status" class="status"></div>
+  </div>
+
+  <!-- QUERY -->
+  <div class="card">
+    <h2><span class="step-num">5</span> Ask a question</h2>
+    <div class="desc">Retrieves top-k relevant chunks, compresses them, and answers using your configured LLM.</div>
+    <input type="text" id="query-input" placeholder="Ask something about your data...">
+    <button onclick="askQuestion()">Get answer</button>
+    <div id="query-status" class="status"></div>
+    <div id="answer-box" class="answer-box" style="display:none;"></div>
+  </div>
+
+  <div class="footer-note">Everything above calls this same backend's REST API. Full reference at <a href="/docs" style="color:var(--accent);">/docs</a>.</div>
+</div>
+
+<script>
+function setStatus(id, text, kind) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'status ' + (kind || '');
+}
+
+async function refreshConfigStatus() {
+  try {
+    const r = await fetch('/config/status');
+    const d = await r.json();
+    const pill = document.getElementById('cfg-pill');
+    const ready = d.embedding_configured && d.llm_configured;
+    pill.textContent = ready ? 'configured' : 'not set';
+    pill.className = 'pill' + (ready ? ' on' : '');
+    if (d.embedding_model) document.getElementById('embedding_model').placeholder = d.embedding_model;
+    if (d.llm_model) document.getElementById('llm_model').placeholder = d.llm_model;
+  } catch (e) { /* ignore */ }
+}
+refreshConfigStatus();
+
+async function saveConfig() {
+  const body = {
+    embedding_api_key: document.getElementById('embedding_api_key').value,
+    embedding_model: document.getElementById('embedding_model').value,
+    llm_api_key: document.getElementById('llm_api_key').value,
+    llm_model: document.getElementById('llm_model').value,
+  };
+  if (!body.embedding_api_key || !body.embedding_model || !body.llm_api_key || !body.llm_model) {
+    setStatus('cfg-status', 'Fill in all four fields (or rely on server env vars and skip this).', 'err');
+    return;
+  }
+  setStatus('cfg-status', 'Saving...', 'pending');
+  try {
+    const r = await fetch('/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (r.ok) { setStatus('cfg-status', 'Saved.', 'ok'); refreshConfigStatus(); }
+    else { const e = await r.json(); setStatus('cfg-status', 'Error: ' + JSON.stringify(e.detail), 'err'); }
+  } catch (e) { setStatus('cfg-status', 'Request failed: ' + e, 'err'); }
+}
+
+async function ingest() {
+  const fileInput = document.getElementById('file-input');
+  if (!fileInput.files.length) { setStatus('ingest-status', 'Choose a file first.', 'err'); return; }
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  setStatus('ingest-status', 'Uploading...', 'pending');
+  try {
+    const r = await fetch('/ingest', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) setStatus('ingest-status', `Ingested ${d.rows_ingested} rows. Columns: ${d.columns.join(', ')}`, 'ok');
+    else setStatus('ingest-status', 'Error: ' + JSON.stringify(d.detail), 'err');
+  } catch (e) { setStatus('ingest-status', 'Request failed: ' + e, 'err'); }
+}
+
+async function preprocess() {
+  const filter_query = document.getElementById('filter_query').value || null;
+  const dedupRaw = document.getElementById('dedup_subset').value.trim();
+  const dedup_subset = dedupRaw ? dedupRaw.split(',').map(s => s.trim()) : null;
+  setStatus('preprocess-status', 'Running...', 'pending');
+  try {
+    const r = await fetch('/preprocess', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ filter_query, dedup_subset }) });
+    const d = await r.json();
+    if (r.ok) setStatus('preprocess-status', `Rows after preprocessing: ${d.rows_after_preprocessing}`, 'ok');
+    else setStatus('preprocess-status', 'Error: ' + JSON.stringify(d.detail), 'err');
+  } catch (e) { setStatus('preprocess-status', 'Request failed: ' + e, 'err'); }
+}
+
+async function applyRules() {
+  let rules;
+  try { rules = JSON.parse(document.getElementById('rules-json').value); }
+  catch (e) { setStatus('rules-status', 'Invalid JSON: ' + e, 'err'); return; }
+  const strategy = document.getElementById('strategy').value;
+  const backend = document.getElementById('backend').value;
+  setStatus('rules-status', 'Running rule engine...', 'pending');
+  try {
+    const r = await fetch('/apply-rules', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ rules, strategy, backend }) });
+    const d = await r.json();
+    const resultEl = document.getElementById('rules-result');
+    if (r.ok) {
+      setStatus('rules-status', `Applied to ${d.rows} rows.`, 'ok');
+      resultEl.style.display = 'block';
+      resultEl.textContent = JSON.stringify(d.result_counts, null, 2);
+    } else {
+      setStatus('rules-status', 'Error: ' + JSON.stringify(d.detail), 'err');
+      resultEl.style.display = 'none';
+    }
+  } catch (e) { setStatus('rules-status', 'Request failed: ' + e, 'err'); }
+}
+
+async function embed() {
+  setStatus('embed-status', 'Embedding (this can take a moment)...', 'pending');
+  try {
+    const r = await fetch('/embed', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const d = await r.json();
+    if (r.ok) setStatus('embed-status', `Embedded ${d.embedded_chunks} chunks (dim ${d.dimension}).`, 'ok');
+    else setStatus('embed-status', 'Error: ' + JSON.stringify(d.detail), 'err');
+  } catch (e) { setStatus('embed-status', 'Request failed: ' + e, 'err'); }
+}
+
+async function askQuestion() {
+  const query = document.getElementById('query-input').value.trim();
+  if (!query) { setStatus('query-status', 'Type a question first.', 'err'); return; }
+  setStatus('query-status', 'Thinking...', 'pending');
+  document.getElementById('answer-box').style.display = 'none';
+  try {
+    const r = await fetch('/generate', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ query, top_k: 5, max_context_chars: 4000 }) });
+    const d = await r.json();
+    if (r.ok) {
+      setStatus('query-status', 'Done.', 'ok');
+      const box = document.getElementById('answer-box');
+      box.style.display = 'block';
+      box.textContent = d.answer;
+    } else {
+      setStatus('query-status', 'Error: ' + JSON.stringify(d.detail), 'err');
+    }
+  } catch (e) { setStatus('query-status', 'Request failed: ' + e, 'err'); }
+}
+</script>
+</body>
+</html>

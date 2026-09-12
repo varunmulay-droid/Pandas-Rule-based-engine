@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .compression import compress_to_budget, select_top_k
@@ -122,9 +124,19 @@ class QueryRequest(BaseModel):
 
 
 # ------------------------------------------------------------- endpoints --
+_STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
 @app.get("/")
 def root():
-    """Avoids a bare 404 on the base URL; points to the interactive API docs."""
+    """Serves the self-contained dashboard UI (upload, preprocess, rules, embed, ask)."""
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/api")
+def api_info():
+    """Machine-readable pointer, kept separate from the human-facing '/' dashboard."""
     return {"service": "RAG Pipeline Backend", "docs": "/docs", "health": "/health"}
 
 
