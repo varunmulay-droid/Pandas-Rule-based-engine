@@ -1,85 +1,179 @@
-# RAG Pipeline Backend (FastAPI) + Langflow UI
+<div align="center">
 
-Implements the pipeline:
+# 🧩 Pandas Rule-Based Engine — RAG Pipeline Backend
+
+**A vectorized, industry-grade rules engine feeding a Retrieval-Augmented Generation pipeline — served through Langflow.**
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Pandas](https://img.shields.io/badge/Pandas-2.2-150458?logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![Langflow](https://img.shields.io/badge/Langflow-UI%20Layer-8A2BE2)](https://www.langflow.org/)
+[![OpenRouter](https://img.shields.io/badge/LLM%20%2F%20Embeddings-OpenRouter-orange)](https://openrouter.ai/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+
+</div>
+
+---
+
+## 📐 Architecture
 
 ```
-Ingestion -> Preprocessing (filter+dedup) -> Preprocessed File
-   -> Pandas Rule-Based Engine -> Embeddings (OpenRouter) -> Context Compression
-   -> RAG via Langflow (Prompt -> LLM, OpenRouter)
+┌─────────────────────┐
+│   Ingestion Layer    │  .csv · .xls · .xlsx · .json · .md · .pdf
+└──────────┬───────────┘
+           ▼
+┌─────────────────────────────────────────┐
+│  Preprocessing: Filter · Dedup · Normalize │
+└──────────┬──────────────────────────────┘
+           ▼
+┌─────────────────────┐
+│  Preprocessed File    │
+└──────────┬───────────┘
+           ▼
+┌───────────────────────────────────────────────┐
+│  Pandas Rule-Based Engine  (df.query / np.select) │
+└──────────┬──────────────────────────────────────┘
+           ▼
+┌───────────────────────────────────────┐
+│  Embeddings Model (OpenRouter, tokenized) │
+└──────────┬──────────────────────────────┘
+           ▼
+┌─────────────────────────────┐
+│   Context Compression Layer  │
+└──────────┬───────────────────┘
+           ▼
+┌─────────────────────────────────────────────┐
+│   RAG via Langflow  ·  Prompt → LLM (OpenRouter)  │
+└─────────────────────────────────────────────┘
 ```
 
-The **UI is strictly Langflow** — this repo is the backend engine that a
-Langflow flow calls into. Nothing here builds a competing chat UI.
+> **The UI is strictly Langflow.** This repository is the *engine room* — ingestion, cleaning, rule evaluation, embeddings, and context compression all happen here, behind a FastAPI backend. Langflow owns the retrieval-augmented prompt → LLM flow and the chat surface on top of it.
 
-## Layout
+---
+
+## ✨ Highlights
+
+| | |
+|---|---|
+| ⚡ **Vectorized rules** | No `iterrows()`. Every rule runs via `DataFrame.query()` or `numpy.select` across the full dataset in one pass. |
+| 🛡️ **Validated by design** | Rules are schema-checked, deduplicated by name, and cross-referenced against real DataFrame columns before execution — bad rules fail fast, not silently at row 40,000. |
+| 🔀 **Two execution backends** | `query` for flexible, possibly-overlapping conditions. `np_select` for maximum throughput on mutually exclusive rules. |
+| 🧠 **Bring your own models** | API key, embedding model, and LLM model are supplied at runtime — nothing is hardcoded. |
+| 📄 **Multi-format ingestion** | CSV, Excel, JSON, Markdown, and PDF all normalize into the same tabular shape. |
+| 🧵 **Context-aware compression** | Cosine-similarity top-k retrieval packed into a hard character budget before it ever reaches the LLM. |
+
+---
+
+## 🗂️ Project Layout
 
 ```
-app/
-  loaders.py             # ingestion: .csv .xls .xlsx .json .md .pdf -> DataFrame
-  preprocessing.py        # filtering + dedup (exact + near-dup) + normalization
-  rule_engine.py           # vectorized rule engine (df.query() and np.select backends)
-  openrouter_clients.py    # embeddings + chat clients (API key/model supplied by caller)
-  compression.py           # cosine-similarity top-k retrieval + char-budget compression
-  main.py                  # FastAPI app wiring it all together
-langflow_custom/
-  rag_backend_component.py # Langflow custom component that calls /query
-requirements.txt
+rag_pipeline/
+├── app/
+│   ├── loaders.py               # Ingestion — multi-format file readers
+│   ├── preprocessing.py         # Filtering, exact + near-duplicate dedup, normalization
+│   ├── rule_engine.py           # ⭐ Vectorized rule engine (query & np.select backends)
+│   ├── openrouter_clients.py    # Embeddings + Chat clients for OpenRouter
+│   ├── compression.py           # Top-k retrieval + context-budget compression
+│   └── main.py                  # FastAPI app wiring the full pipeline
+├── langflow_custom/
+│   └── rag_backend_component.py # Langflow node bridging the flow to this backend
+├── requirements.txt
+└── README.md
 ```
 
-## Running the backend
+---
+
+## 🚀 Quickstart
 
 ```bash
+git clone https://github.com/varunmulay-droid/Pandas-Rule-based-engine.git
+cd Pandas-Rule-based-engine
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-## Flow
+The API is now live at `http://localhost:8000` (interactive docs at `/docs`).
 
-1. `POST /config` — supply your OpenRouter API key, embedding model
-   name (e.g. `liquid/lfm-2.5-embedding-350m:free`), and LLM model name
-   (e.g. `nvidia/nemotron-3.5-content-safety:free`). Nothing is
-   hardcoded — you choose the models at runtime.
-2. `POST /ingest` — upload a `.csv`, `.xls(x)`, `.json`, `.md`, or `.pdf` file.
-3. `POST /preprocess` — filter rows, drop-dedup, normalize text columns.
-4. `POST /apply-rules` — pass your rule list (see `Rule` schema below);
-   choose `backend: "query"` (flexible, per-rule `.query()`) or
-   `backend: "np_select"` (fastest, single-pass, best when rules are
-   mutually exclusive).
-5. `POST /embed` — embeds the preprocessed text via the OpenRouter
-   embeddings model.
-6. `POST /query` — given a natural-language query, retrieves and
-   compresses the top-k most relevant chunks. **This is the endpoint
-   the Langflow custom component calls.**
-7. (optional) `POST /generate` — end-to-end retrieve + compress + call
-   the base LLM, for testing outside Langflow.
+---
 
-### Rule schema
+## 🔧 Pipeline API
+
+| Step | Endpoint | Purpose |
+|---|---|---|
+| 0 | `POST /config` | Register your OpenRouter API key + embedding/LLM model names |
+| 1 | `POST /ingest` | Upload a file (`.csv` / `.xls(x)` / `.json` / `.md` / `.pdf`) |
+| 2 | `POST /preprocess` | Filter, dedup, normalize the ingested data |
+| 3 | `POST /apply-rules` | Run the rule engine over the preprocessed data |
+| 4 | `POST /embed` | Generate embeddings for downstream retrieval |
+| 5 | `POST /query` | Retrieve + compress top-k context for a question |
+| 6 | `POST /generate` | End-to-end retrieve → compress → LLM call (for testing outside Langflow) |
+
+<details>
+<summary><strong>Example: configuring your models</strong></summary>
+
+```bash
+curl -X POST http://localhost:8000/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "openrouter_api_key": "sk-or-...",
+        "embedding_model": "liquid/lfm-2.5-embedding-350m:free",
+        "llm_model": "nvidia/nemotron-3.5-content-safety:free"
+      }'
+```
+</details>
+
+<details>
+<summary><strong>Example: defining rules</strong></summary>
 
 ```json
 {
   "rules": [
-    {"name": "example_rule", "condition": "some_column > 10", "action": "Flag"}
+    { "name": "example_rule", "condition": "some_column > 10", "action": "Flag" }
   ],
   "strategy": "last_match",
   "backend": "query"
 }
 ```
 
-`condition` is any valid `DataFrame.query()` expression. Rules are
-validated (schema + best-effort column-reference check) before
-execution, and every match is logged with the row count it affected.
+- `condition` — any valid `DataFrame.query()` expression.
+- `strategy` — `first_match` or `last_match` (which rule wins when several match the same row).
+- `backend` — `query` (flexible) or `np_select` (fastest, mutually-exclusive rules).
 
-## Wiring the Langflow flow
+Every rule is validated before it runs, and every match is logged with the row count it affected.
+</details>
 
-1. Copy `langflow_custom/rag_backend_component.py` into your Langflow
-   `custom_components` directory and restart Langflow.
-2. In the Langflow UI, build:
+---
 
-   `Chat Input -> RAG Backend Bridge (backend_url = http://localhost:8000/query) -> Prompt -> OpenRouter LLM node -> Chat Output`
+## 🔗 Wiring the Langflow Flow
 
-3. Set the OpenRouter LLM node's model to whatever `llm_model` you
-   configured in step 1 above (e.g. `nvidia/nemotron-3.5-content-safety:free`).
+1. Copy `langflow_custom/rag_backend_component.py` into your Langflow `custom_components/` directory and restart Langflow.
+2. Build the flow:
 
-All ingestion/preprocessing/rules/embeddings/compression happen in the
-FastAPI backend ahead of time (steps 1-6); Langflow only owns the final
-retrieval-augmented prompt -> LLM call and the chat UI around it.
+   ```
+   Chat Input → RAG Backend Bridge (→ http://localhost:8000/query) → Prompt → OpenRouter LLM → Chat Output
+   ```
+
+3. Point the OpenRouter LLM node at the same `llm_model` you registered in `/config`.
+
+Everything upstream of the prompt — ingestion, preprocessing, rules, embeddings, compression — already happened in the FastAPI backend. Langflow's job is purely the final retrieval-augmented generation step and the UI around it.
+
+---
+
+## 🧱 Design Principles
+
+- **Fail loud, not silent.** Malformed rules, unknown columns, and duplicate rule names are caught before execution.
+- **No hidden state in models.** API keys and model identifiers travel with the request/config call — never baked into code.
+- **Vectorization first.** Anything that touches every row is written to run in one pass over the DataFrame or NumPy array.
+- **Separation of concerns.** The backend never renders UI; Langflow never touches raw data cleaning or rule logic.
+
+---
+
+## 📜 License
+
+MIT — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+<sub>Built by <a href="https://github.com/varunmulay-droid">@varunmulay-droid</a></sub>
+</div>
